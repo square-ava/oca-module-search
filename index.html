@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OCA Module Search</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --border: #e2e5ea; --text: #1c2024;
+    --muted: #697280; --accent: #7c3aed; --accent-soft: #efe9fd;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --b17: #2563eb; --b18: #16a34a; --b19: #ea580c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d; --panel: #1e2127; --border: #2c3038; --text: #e6e9ef;
+      --muted: #9aa3b2; --accent: #a78bfa; --accent-soft: #2a2340;
+      --b17: #60a5fa; --b18: #4ade80; --b19: #fb923c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10; background: var(--panel);
+    border-bottom: 1px solid var(--border); padding: 14px 20px;
+  }
+  .titlerow { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; font-weight: 700; }
+  .meta { color: var(--muted); font-size: 12.5px; }
+  .controls { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+  #q {
+    flex: 1 1 320px; min-width: 220px; padding: 10px 14px; font-size: 15px;
+    border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--text);
+  }
+  #q:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .tabs { display: flex; gap: 4px; }
+  .tab {
+    padding: 8px 14px; border: 1px solid var(--border); background: var(--bg);
+    color: var(--text); border-radius: 8px; cursor: pointer; font-size: 13.5px; font-weight: 600;
+  }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  select {
+    padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 13.5px; max-width: 220px;
+  }
+  main { padding: 16px 20px 60px; max-width: 1100px; margin: 0 auto; }
+  .count { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 11px;
+    padding: 13px 15px; margin-bottom: 10px;
+  }
+  .card .row1 { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .card .name { font-weight: 700; font-size: 15.5px; }
+  .card .tech { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+  .card .summary { color: var(--text); margin: 5px 0 8px; }
+  .card .foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
+  .repo { font-family: var(--mono); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .badge {
+    display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 8px;
+    border-radius: 999px; color: #fff;
+  }
+  .badge.v17 { background: var(--b17); } .badge.v18 { background: var(--b18); } .badge.v19 { background: var(--b19); }
+  .badge.other { background: var(--muted); }
+  .pill { background: var(--accent-soft); color: var(--accent); padding: 2px 8px; border-radius: 6px; font-size: 11.5px; }
+  mark { background: var(--accent-soft); color: inherit; border-radius: 3px; padding: 0 1px; }
+  .empty { text-align: center; color: var(--muted); padding: 60px 20px; }
+  .loading { text-align: center; color: var(--muted); padding: 60px 20px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="titlerow">
+    <h1>OCA Module Search</h1>
+    <span class="meta" id="meta">loading index…</span>
+  </div>
+  <div class="controls">
+    <input id="q" type="search" placeholder="Search modules — e.g. follow-up, edi, mis builder, account_payment…" autofocus autocomplete="off">
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-v="all">All</button>
+      <button class="tab" data-v="17.0">17</button>
+      <button class="tab" data-v="18.0">18</button>
+      <button class="tab" data-v="19.0">19</button>
+    </div>
+    <select id="cat"><option value="">All categories</option></select>
+    <select id="repo"><option value="">All repos</option></select>
+  </div>
+</header>
+<main>
+  <div class="count" id="count"></div>
+  <div id="results"><div class="loading">Loading module index…</div></div>
+</main>
+<script>
+const state = { data: [], groups: [], version: "all", q: "", cat: "", repo: "" };
+
+// A "group" = one module (technical name) in one repo, aggregated across branches.
+function buildGroups(modules) {
+  const map = new Map();
+  for (const m of modules) {
+    const key = m.repo + "/" + m.module;
+    let g = map.get(key);
+    if (!g) {
+      g = { module: m.module, repo: m.repo, name: m.name, summary: m.summary,
+            category: m.category, author: m.author, depends: m.depends || [],
+            branches: {}, };
+      map.set(key, g);
+    }
+    // Prefer the newest branch's metadata for display.
+    if (!g._newest || m.branch > g._newest) {
+      g._newest = m.branch; g.name = m.name; g.summary = m.summary;
+      g.category = m.category; g.depends = m.depends || [];
+    }
+    g.branches[m.branch] = m.url;
+  }
+  const groups = [...map.values()];
+  for (const g of groups) {
+    g.haystack = (g.module + " " + g.name + " " + g.summary + " " + g.repo + " " +
+                  g.category + " " + (g.depends || []).join(" ")).toLowerCase();
+  }
+  return groups;
+}
+
+function scoreGroup(g, terms) {
+  if (!terms.length) return 1;
+  let score = 0;
+  const mod = g.module.toLowerCase(), name = g.name.toLowerCase();
+  for (const t of terms) {
+    if (!g.haystack.includes(t)) return -1;      // every term must match
+    if (mod === t) score += 100;
+    else if (mod.includes(t)) score += 40;
+    if (name.includes(t)) score += 20;
+    if (g.summary.toLowerCase().includes(t)) score += 5;
+  }
+  return score;
+}
+
+function badge(b) {
+  const short = b.split(".")[0];
+  const cls = ({ "17": "v17", "18": "v18", "19": "v19" })[short] || "other";
+  return `<span class="badge ${cls}">${short}</span>`;
+}
+
+function hl(text, terms) {
+  if (!terms.length) return escapeHtml(text);
+  let out = escapeHtml(text);
+  for (const t of terms) {
+    if (!t) continue;
+    out = out.replace(new RegExp("(" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig"), "<mark>$1</mark>");
+  }
+  return out;
+}
+function escapeHtml(s) { return (s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+function render() {
+  const terms = state.q.toLowerCase().split(/\s+/).filter(Boolean);
+  let rows = state.groups;
+  if (state.version !== "all") rows = rows.filter(g => g.branches[state.version]);
+  if (state.cat) rows = rows.filter(g => g.category === state.cat);
+  if (state.repo) rows = rows.filter(g => g.repo === state.repo);
+
+  rows = rows.map(g => ({ g, s: scoreGroup(g, terms) })).filter(x => x.s >= 0);
+  rows.sort((a, b) => b.s - a.s || a.g.module.localeCompare(b.g.module));
+
+  const total = rows.length;
+  const shown = rows.slice(0, 400);
+  document.getElementById("count").textContent =
+    `${total} module${total === 1 ? "" : "s"}` + (total > shown.length ? ` (showing first ${shown.length})` : "");
+
+  const el = document.getElementById("results");
+  if (!total) { el.innerHTML = `<div class="empty">No modules match.</div>`; return; }
+  el.innerHTML = shown.map(({ g }) => {
+    const branches = Object.keys(g.branches).sort();
+    const badges = branches.map(b => `<a href="${g.branches[b]}" target="_blank" title="Open ${g.module} ${b} on GitHub">${badge(b)}</a>`).join(" ");
+    const deps = (g.depends || []).length ? `<span class="pill">${g.depends.length} deps</span>` : "";
+    return `<div class="card">
+      <div class="row1">
+        <span class="name">${hl(g.name, terms)}</span>
+        <span class="tech">${hl(g.module, terms)}</span>
+        <span>${badges}</span>
+      </div>
+      ${g.summary ? `<div class="summary">${hl(g.summary, terms)}</div>` : ""}
+      <div class="foot">
+        <a class="repo" href="https://github.com/OCA/${g.repo}" target="_blank">OCA/${g.repo}</a>
+        ${g.category ? `· <span>${escapeHtml(g.category)}</span>` : ""}
+        ${deps ? "· " + deps : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function populateFilters() {
+  const cats = [...new Set(state.groups.map(g => g.category).filter(Boolean))].sort();
+  const repos = [...new Set(state.groups.map(g => g.repo))].sort();
+  const catSel = document.getElementById("cat"), repoSel = document.getElementById("repo");
+  for (const c of cats) catSel.insertAdjacentHTML("beforeend", `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`);
+  for (const r of repos) repoSel.insertAdjacentHTML("beforeend", `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`);
+}
+
+function wire() {
+  document.getElementById("q").addEventListener("input", e => { state.q = e.target.value; render(); });
+  document.getElementById("cat").addEventListener("change", e => { state.cat = e.target.value; render(); });
+  document.getElementById("repo").addEventListener("change", e => { state.repo = e.target.value; render(); });
+  document.getElementById("tabs").addEventListener("click", e => {
+    const btn = e.target.closest(".tab"); if (!btn) return;
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    btn.classList.add("active"); state.version = btn.dataset.v; render();
+  });
+}
+
+fetch("oca_index.json")
+  .then(r => r.json())
+  .then(idx => {
+    state.data = idx.modules;
+    state.groups = buildGroups(idx.modules);
+    document.getElementById("meta").textContent =
+      `${idx.module_count} module records · ${state.groups.length} unique · ${idx.repo_count} repos · built ${idx.generated_utc}`;
+    populateFilters(); wire(); render();
+  })
+  .catch(err => {
+    document.getElementById("results").innerHTML =
+      `<div class="empty">Could not load <code>oca_index.json</code>.<br>Run <code>python3 build_index.py</code> first, then serve this folder.<br><small>${escapeHtml(String(err))}</small></div>`;
+  });
+</script>
+</body>
+</html>

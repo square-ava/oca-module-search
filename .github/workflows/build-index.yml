@@ -1,0 +1,57 @@
+name: Build OCA index
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"      # every Monday 04:00 UTC
+  workflow_dispatch: {}        # allow manual runs from the Actions tab
+  push:
+    branches: [main]
+    paths: [build_index.py]    # rebuild if the crawler changes
+
+permissions:
+  contents: write             # to commit the refreshed index
+  pages: write
+  id-token: write
+
+concurrency:
+  group: oca-index
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Crawl OCA and build oca_index.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # auto-provided, 5000 req/hr
+        run: python3 build_index.py --out oca_index.json
+
+      - name: Commit refreshed index
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add oca_index.json
+          if git diff --staged --quiet; then
+            echo "Index unchanged."
+          else
+            git commit -m "chore: refresh OCA index ($(date -u +%F))"
+            git push
+          fi
+
+  # Publish the folder to GitHub Pages.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: "." }
+      - uses: actions/deploy-pages@v4
